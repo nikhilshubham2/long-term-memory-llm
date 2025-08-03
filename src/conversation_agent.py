@@ -1,7 +1,6 @@
-# src/conversation_agent.py
 import os
 import json
-import openai
+import google.generativeai as genai
 from dotenv import load_dotenv
 from src.memory_manager import MemoryManager
 
@@ -10,67 +9,34 @@ load_dotenv()
 
 class ConversationAgent:
     def __init__(self, memory_manager: MemoryManager):
-        """
-        Initializes the ConversationAgent.
-
-        Args:
-            memory_manager (MemoryManager): An instance of the memory manager.
-        """
         self.memory_manager = memory_manager
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
-            # This error is critical, so we stop the program if the key is missing.
-            raise ValueError("OPENAI_API_KEY not found. Please check your .env file.")
-        self.client = openai.OpenAI(api_key=api_key)
+            raise ValueError("GEMINI_API_KEY not found. Please check your .env file.")
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
 
     def _analyze_message_intent(self, user_message: str):
-        """
-        Uses an LLM to classify the user's intent.
-
-        This is the "brain" that decides whether a message is a command
-        to remember something, forget something, or just part of a normal chat.
-        """
-        # This system prompt is a powerful way to instruct the LLM on its task.
         system_prompt = """You are a classification assistant. Your job is to analyze a user's message and determine the intent. Classify the message into one of three categories:
-1.  **ADD_MEMORY**: The user is stating a fact or information they want you to remember for later. Examples: "I use Shram and Magnet as productivity tools", "My favorite color is blue", "Remember that my flight is at 8 PM".
-2.  **DELETE_MEMORY**: The user is asking to forget, remove, or update a previously stored fact. Examples: "I don't use Magnet anymore", "Forget about my favorite color", "My flight has been changed, so forget the 8 PM time".
-3.  **CONVERSATION**: The user is asking a question or making a statement that is not a direct memory command. This is the default case. Examples: "What are the productivity tools that I use?", "Hello, how are you?", "What's the weather like?".
+1.  **ADD_MEMORY**: The user is stating a fact or information they want you to remember for later.
+2.  **DELETE_MEMORY**: The user is asking to forget, remove, or update a previously stored fact.
+3.  **CONVERSATION**: The user is asking a question or making a statement that is not a direct memory command.
 
 Respond with a JSON object in the strict format: {"intent": "CATEGORY", "content": "The core fact or subject"}
-- For ADD_MEMORY, 'content' should be the specific fact to remember (e.g., "I use Shram and Magnet as productivity tools").
-- For DELETE_MEMORY, 'content' should be the specific fact or subject to forget (e.g., "Magnet" or "my favorite color").
-- For CONVERSATION, 'content' can be an empty string or the original message.
 """
+        full_prompt = f"{system_prompt}\n\nUser message: \"{user_message}\""
         try:
-            # We use a capable model and enforce JSON output for reliable parsing.
-            response = self.client.chat.completions.create(
-                model="gpt-4o-mini", # A cost-effective and powerful model for this task
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"User message: \"{user_message}\""}
-                ],
-                response_format={"type": "json_object"}
-            )
-            # The response content is a JSON string, so we parse it into a Python dictionary.
-            return json.loads(response.choices[0].message.content)
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+            response = self.model.generate_content(full_prompt, generation_config=generation_config)
+            return json.loads(response.text)
         except Exception as e:
-            # If the API call fails, we default to treating it as a normal conversation.
-            print(f"Error analyzing intent: {e}")
+            print(f"Error analyzing intent with Gemini: {e}")
             return {"intent": "CONVERSATION", "content": user_message}
 
     def _get_conversational_response(self, user_message: str):
-        """
-        Generates a standard conversational response, but with the added context of long-term memories.
-        """
         memories = self.memory_manager.get_all_memories()
-        
-        # We format the memories nicely for the prompt.
-        if memories:
-            memory_context = "\n".join([f"- {m['content']}" for m in memories])
-        else:
-            memory_context = "No facts are known about the user yet."
+        memory_context = "\n".join([f"- {m['content']}" for m in memories]) if memories else "No facts are known about the user yet."
 
-        # This prompt is for the main response generation.
         prompt = f"""You are a helpful assistant with a memory. Here are some facts you know about the user:
 <memory>
 {memory_context}
@@ -81,30 +47,76 @@ Based on the facts in your memory, answer the user's current message.
 User message: "{user_message}"
 Assistant:"""
         try:
-            response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo", # This model is fast and efficient for conversation.
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.choices[0].message.content.strip()
+            response = self.model.generate_content(prompt)
+            return response.text.strip()
         except Exception as e:
-            return f"An error occurred while generating a response: {e}"
+            return f"An error occurred while generating a response with Gemini: {e}"
+
+    # DELETION METHOD
+    def _handle_deletion(self, deletion_request: str):
+        """
+        Uses the LLM to intelligently identify which memories to delete.
+        """
+        memories = self.memory_manager.get_all_memories()
+        if not memories:
+            return "There are no memories to delete."
+
+        # Create a numbered list of memories for the AI to choose from
+        memories_list_str = "\n".join([f"{i+1}. {mem['content']}" for i, mem in enumerate(memories)])
+
+        # --- FIX IS HERE: Doubled curly braces {{ and }} ---
+        prompt = f"""You are a memory deletion assistant. The user wants to delete a memory.
+    Your task is to identify which of the following numbered memories corresponds to the user's request.
+
+    User's deletion request: "{deletion_request}"
+
+    Here are the current memories:
+    {memories_list_str}
+
+    Respond with a JSON object containing the numbers of the memories to delete, like {{"indices_to_delete": [1, 3]}}.
+    If no memory matches the request, respond with {{"indices_to_delete": []}}.
+    """
+        try:
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+            response = self.model.generate_content(prompt, generation_config=generation_config)
+            
+            result = json.loads(response.text)
+            indices_to_delete = result.get("indices_to_delete", [])
+
+            if not indices_to_delete:
+                return "Okay, I couldn't find a specific memory to delete based on your request."
+
+            # We get the indices from the AI and delete the memories from our list
+            # We must sort and reverse the indices to avoid issues when deleting multiple items
+            indices_to_delete.sort(reverse=True)
+            
+            deleted_memories_content = []
+            for index in indices_to_delete:
+                # Check index is valid
+                if 0 < index <= len(memories):
+                    deleted_memories_content.append(memories.pop(index - 1)['content'])
+            
+            # Now we tell the memory manager to save the new, shorter list of memories
+            self.memory_manager.update_memories(memories)
+            
+            return f"Okay, I have forgotten: '{', '.join(deleted_memories_content)}'"
+
+        except Exception as e:
+            print(f"Error during AI-powered deletion: {e}")
+            return "Sorry, I had trouble processing that deletion request."
 
     def handle_message(self, user_message: str):
-        """
-        The main public method to process a user's message.
-        It orchestrates the analysis, memory operations, and response generation.
-        """
-        # Step 1: Analyze the user's intent.
         analysis = self._analyze_message_intent(user_message)
         intent = analysis.get("intent")
         content = analysis.get("content")
 
-        # Step 2: Act based on the classified intent.
         if intent == "ADD_MEMORY" and content:
             self.memory_manager.add_memory(content)
             return f"Okay, I'll remember that: '{content}'"
+        
+        # DELETION HANDLING
         elif intent == "DELETE_MEMORY" and content:
-            self.memory_manager.delete_memory(content)
-            return f"Okay, I have forgotten everything related to: '{content}'"
-        else: # Default to CONVERSATION
+            return self._handle_deletion(content)
+        
+        else: # Default CONVERSATION
             return self._get_conversational_response(user_message)

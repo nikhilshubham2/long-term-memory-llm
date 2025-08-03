@@ -1,4 +1,3 @@
-# src/memory_manager.py
 import json
 from typing import List, Dict
 
@@ -32,3 +31,11 @@ class MemoryManager:
         ]
         if len(self.memories) < initial_count:
             self._save_memories()
+
+    def update_memories(self, new_memories_list: list):
+        """
+        Overwrites the current memories with a new list.
+        Used by the agent after an AI-powered deletion.
+        """
+        self.memories = new_memories_list
+        self._save_memories()
