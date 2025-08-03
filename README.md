@@ -6,6 +6,7 @@
 -   **API Agnostic Design:** Initially built for OpenAI, the agent was successfully migrated to the **Google Gemini API**, demonstrating architectural flexibility and adaptability.
 -   **Secure Configuration:** API keys and sensitive information are managed securely using a `.env` file, which is excluded from version control.
 -   **Unit Tested:** Core components like the `MemoryManager` are validated with `pytest` to ensure reliability.
+-   **Interactive Web UI:** A user-friendly web interface built with **Gradio** allows for easy, real-time interaction with the agent.
 
 ## Tech Stack
 
@@ -55,13 +56,30 @@ Follow these steps to set up and run the project locally.
 
 ## Usage
 
-To run the conversational agent, execute the `main.py` script from the project's root directory. Ensure your virtual environment is activated first.
+This application can be run in two modes: through an interactive web UI or via the command line.
+
+### Web Interface
+
+To launch the user-friendly web UI, run the `app.py` script from the project's root directory.
+
+```bash
+python app.py
+```
+
+This will start a local web server and provide two URLs in your terminal. Open the "local URL" in your browser to interact with the agent. A temporary public "share URL" will also be generated, which can be used to share the demo with others.
+
+### Command-Line Interface
+
+For a simple, terminal-based interaction, run the `main.py` script:
 
 ```bash
 python main.py
 ```
 
-The application will start, and you can begin chatting with it. Type `exit` to end the session.
+The application will start, and you can begin chatting with it in your terminal. Type `exit` to end the session.
+
+To run the conversational agent, execute the `main.py` script from the project's root directory. Ensure your virtual environment is activated first.
+
 
 ## Example Conversation
 
