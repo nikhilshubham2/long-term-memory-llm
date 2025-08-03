@@ -132,7 +132,7 @@ Agent: Goodbye!
 |
 |-- /tests                # Unit tests for the project
 |   `-- test_memory_manager.py
-|
+|-- app.py                # Gradio Web UI application
 |-- main.py               # Main entry point to run the application
 |-- requirements.txt      # Project dependencies
 |-- .env                  # Stores secret API keys (not committed)
